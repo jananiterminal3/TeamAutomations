@@ -1,29 +1,38 @@
+import { unstable_cache } from 'next/cache'
 import { LinearIssue, ProjectGroup } from './types'
 import { isBlocked } from './utils'
 
 const LINEAR_API = 'https://api.linear.app/graphql'
 
+// Lean query — labels removed (nested connection was the complexity killer).
+// Blocked detection falls back to state name. Date filter keeps to 2026+.
+// Paginated: fetch up to 4 pages of 50 = 200 issues max.
 const QUERY = `
-  query TOFFIssues {
+  query TOFFIssues($after: String) {
     teams(filter: { key: { eq: "TOFF" } }) {
       nodes {
         id
         name
-        issues(first: 250, orderBy: updatedAt) {
+        issues(
+          first: 25
+          after: $after
+          filter: { createdAt: { gte: "2026-01-01" } }
+          orderBy: updatedAt
+        ) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
           nodes {
             id
             identifier
             title
             estimate
-            priority
             state {
-              id
               name
               type
-              color
             }
             assignee {
-              id
               name
               displayName
             }
@@ -31,21 +40,11 @@ const QUERY = `
               id
               name
               color
-              state
-              targetDate
-            }
-            labels {
-              nodes {
-                id
-                name
-                color
-              }
             }
             dueDate
             startedAt
             completedAt
             createdAt
-            updatedAt
           }
         }
       }
@@ -53,37 +52,74 @@ const QUERY = `
   }
 `
 
-export async function fetchLinearIssues(): Promise<LinearIssue[]> {
-  const apiKey = process.env.LINEAR_API_KEY
-  if (!apiKey) throw new Error('LINEAR_API_KEY environment variable is not set')
-
-  const res = await fetch(LINEAR_API, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: apiKey,
-    },
-    body: JSON.stringify({ query: QUERY }),
-    next: { tags: ['linear-data'], revalidate: 86400 },
-  })
-
-  if (!res.ok) {
-    throw new Error(`Linear API error: ${res.status} ${res.statusText}`)
-  }
-
-  const json = await res.json()
-
-  if (json.errors) {
-    const msgs = json.errors.map((e: { message: string }) => e.message).join(', ')
-    throw new Error(`Linear GraphQL error: ${msgs}`)
-  }
-
-  const teams: { issues: { nodes: LinearIssue[] } }[] =
-    json.data?.teams?.nodes ?? []
-
-  if (teams.length === 0) return []
-  return teams[0].issues.nodes
+interface RawIssue extends Omit<LinearIssue, 'labels' | 'priority'> {
+  labels?: { nodes: { id: string; name: string; color: string }[] }
 }
+
+async function fetchAllIssues(apiKey: string): Promise<LinearIssue[]> {
+  const all: LinearIssue[] = []
+  let cursor: string | null = null
+  const MAX_PAGES = 4
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await fetch(LINEAR_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: apiKey,
+      },
+      body: JSON.stringify({
+        query: QUERY,
+        variables: cursor ? { after: cursor } : {},
+      }),
+      cache: 'no-store',
+    })
+
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`Linear API error: ${res.status} — ${body.slice(0, 400)}`)
+    }
+
+    const json = await res.json()
+
+    if (json.errors) {
+      const msgs = json.errors
+        .map((e: { message: string }) => e.message)
+        .join(', ')
+      throw new Error(`Linear GraphQL error: ${msgs}`)
+    }
+
+    const teams = json.data?.teams?.nodes ?? []
+    if (teams.length === 0) break
+
+    const issuesPage = teams[0].issues
+    const nodes: RawIssue[] = issuesPage.nodes ?? []
+
+    // Normalise: add empty labels so downstream code doesn't break
+    all.push(
+      ...nodes.map((n) => ({
+        ...n,
+        priority: 0,
+        labels: n.labels ?? { nodes: [] },
+      }))
+    )
+
+    if (!issuesPage.pageInfo?.hasNextPage) break
+    cursor = issuesPage.pageInfo.endCursor
+  }
+
+  return all
+}
+
+export const fetchLinearIssues = unstable_cache(
+  async () => {
+    const apiKey = process.env.LINEAR_API_KEY
+    if (!apiKey) throw new Error('LINEAR_API_KEY environment variable is not set')
+    return fetchAllIssues(apiKey)
+  },
+  ['linear-issues'],
+  { tags: ['linear-data'], revalidate: 86400 }
+)
 
 export function groupByProject(issues: LinearIssue[]): ProjectGroup[] {
   const map = new Map<string, ProjectGroup>()

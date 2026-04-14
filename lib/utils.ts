@@ -3,10 +3,10 @@ import { LinearIssue, StatusDisplay, GanttWeek } from './types'
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 export function isBlocked(issue: LinearIssue): boolean {
-  return (
-    issue.labels.nodes.some((l) => l.name.toLowerCase().includes('blocked')) ||
-    issue.state.name.toLowerCase().includes('blocked')
-  )
+  const labelBlocked =
+    issue.labels?.nodes?.some((l) => l.name.toLowerCase().includes('blocked')) ?? false
+  const stateBlocked = issue.state.name.toLowerCase().includes('blocked')
+  return labelBlocked || stateBlocked
 }
 
 export function getStatusDisplay(issue: LinearIssue): StatusDisplay {
