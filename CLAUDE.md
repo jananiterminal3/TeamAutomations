@@ -11,12 +11,13 @@
 | Janani | Team member |
 
 ## Stack & Tools
-- **Runtime**: Node.js / Python (TBD per automation)
-- **Infra**: TBD
-- **CI/CD**: TBD
+- **Framework**: Next.js 15 (App Router, TypeScript)
+- **Styling**: Tailwind CSS — dark theme (`#0d0d0d` base)
+- **Fonts**: JetBrains Mono (labels/code), DM Sans (body)
+- **Data**: Linear GraphQL API (`https://api.linear.app/graphql`), team key `TOFF`
+- **Hosting**: Vercel (auto-deploy from GitHub)
+- **Cron**: `/api/cron` at `0 10 * * *` UTC (6pm SGT), revalidates `linear-data` tag
 - **Version control**: Git (GitHub)
-
-> Update this section as the stack firms up.
 
 ## Memory Files
 All persistent context lives in `/memory/`. Add dated entries to keep history current.
